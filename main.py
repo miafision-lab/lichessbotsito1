@@ -1,9 +1,25 @@
 import os
 import random
+import threading
+from flask import Flask
 import chess
 import berserk
 
-# Cargar el token desde la variable de entorno
+# --- Mini Servidor HTTP para Render Free ---
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Lichess Bot está vivo y ejecutándose", 200
+
+def run_flask():
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
+
+# Iniciar servidor Flask en un hilo secundario
+threading.Thread(target=run_flask, daemon=True).start()
+
+# --- Código del Bot de Lichess ---
 TOKEN = os.environ.get("LICHESS_TOKEN")
 
 if not TOKEN:
@@ -12,12 +28,10 @@ if not TOKEN:
 session = berserk.TokenSession(TOKEN)
 client = berserk.Client(session=session)
 
-# Obtener ID del bot
 my_profile = client.account.get()
 my_id = my_profile['id']
 print(f"Bot conectado como: {my_profile['username']}")
 
-# Escuchar eventos globales (retos, inicio de partidas)
 for event in client.bots.stream_incoming_events():
     event_type = event.get('type')
 
@@ -26,13 +40,11 @@ for event in client.bots.stream_incoming_events():
         challenge_id = challenge['id']
         variant = challenge['variant']['key']
 
-        # Aceptar solo variantes estándar (puedes ajustar esta condición)
         if variant == 'standard':
             client.bots.accept_challenge(challenge_id)
             print(f"Reto aceptado: {challenge_id}")
         else:
             client.bots.decline_challenge(challenge_id, reason='variant')
-            print(f"Reto rechazado (variante {variant}): {challenge_id}")
 
     elif event_type == 'gameStart':
         game_id = event['game']['gameId']
@@ -40,7 +52,6 @@ for event in client.bots.stream_incoming_events():
         
         board = chess.Board()
 
-        # Escuchar el flujo de la partida activa
         for game_event in client.bots.stream_game_state(game_id):
             if game_event['type'] == 'gameFull':
                 white_id = game_event['white'].get('id')
@@ -51,24 +62,20 @@ for event in client.bots.stream_incoming_events():
             else:
                 continue
 
-            # Actualizar estado del tablero según los movimientos
             moves = state['moves'].split() if state['moves'] else []
             board.reset()
             for move in moves:
                 board.push(chess.Move.from_uci(move))
 
-            # Verificar si la partida terminó
             if state['status'] != 'started' or board.is_game_over():
                 print(f"Partida finalizada: {game_id}")
                 break
 
-            # Verificar si es el turno del bot
             is_my_turn = (board.turn == chess.WHITE and is_white) or (board.turn == chess.BLACK and not is_white)
 
             if is_my_turn:
                 legal_moves = list(board.legal_moves)
                 if legal_moves:
-                    # Aquí puedes reemplazar la lógica de elección por tu motor/evaluación personalizada
                     chosen_move = random.choice(legal_moves)
                     client.bots.make_move(game_id, chosen_move.uci())
                     print(f"Jugada enviada [{game_id}]: {chosen_move.uci()}")
